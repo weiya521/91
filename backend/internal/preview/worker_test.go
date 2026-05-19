@@ -109,6 +109,74 @@ func TestPreviewWorkerGeneratesTeaserWithoutReplacingExistingThumbnail(t *testin
 	}
 }
 
+func TestPreviewWorkerDeduplicatesQueuedVideos(t *testing.T) {
+	ctx := context.Background()
+	cat, video := seedPreviewTestVideo(t, "preview-dedupe-video")
+
+	gen := &fakeTeaserGenerator{}
+	drv := &previewFakeDrive{}
+	worker := NewWorker(gen, cat, drv, "")
+
+	if !worker.EnqueueBlocking(ctx, video) {
+		t.Fatal("first enqueue returned false, want true")
+	}
+	if !worker.EnqueueBlocking(ctx, video) {
+		t.Fatal("duplicate enqueue returned false, want idempotent success")
+	}
+	if got := worker.Status().QueueLength; got != 1 {
+		t.Fatalf("queue length = %d, want 1 unique video", got)
+	}
+
+	queued := <-worker.ch
+	if !worker.Enqueue(video) {
+		t.Fatal("enqueue while the same video is reserved returned false, want idempotent success")
+	}
+	select {
+	case <-worker.ch:
+		t.Fatal("duplicate enqueue added another queued video")
+	default:
+	}
+
+	worker.processQueued(ctx, queued)
+	if !worker.Enqueue(video) {
+		t.Fatal("enqueue after processing returned false, want true")
+	}
+}
+
+func TestThumbWorkerDeduplicatesQueuedVideos(t *testing.T) {
+	ctx := context.Background()
+	cat, video := seedPreviewTestVideo(t, "thumb-dedupe-video")
+
+	gen := &fakeThumbGenerator{}
+	drv := &previewFakeDrive{}
+	worker := NewThumbWorker(gen, cat, drv)
+
+	if !worker.Enqueue(video) {
+		t.Fatal("first enqueue returned false, want true")
+	}
+	if !worker.Enqueue(video) {
+		t.Fatal("duplicate enqueue returned false, want idempotent success")
+	}
+	if got := worker.Status().QueueLength; got != 1 {
+		t.Fatalf("queue length = %d, want 1 unique video", got)
+	}
+
+	queued := <-worker.ch
+	if !worker.Enqueue(video) {
+		t.Fatal("enqueue while the same thumbnail is reserved returned false, want idempotent success")
+	}
+	select {
+	case <-worker.ch:
+		t.Fatal("duplicate enqueue added another queued thumbnail")
+	default:
+	}
+
+	worker.processQueued(ctx, queued)
+	if !worker.Enqueue(video) {
+		t.Fatal("enqueue after release returned false, want true")
+	}
+}
+
 func TestPreviewWorkerRemovesPreviousLocalTeaserAfterNewTeaserIsReady(t *testing.T) {
 	ctx := context.Background()
 	cat, video := seedPreviewTestVideo(t, "preview-cleanup-video")

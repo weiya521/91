@@ -153,6 +153,83 @@ func TestRegisterPreviewWorkersGenerateThumbnailsBeforePreviews(t *testing.T) {
 	t.Fatalf("generation did not finish, events=%#v", gen.Events())
 }
 
+func TestFailedThumbnailsDoNotBlockPreviewGeneration(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	video := &catalog.Video{
+		ID:            "video-failed-thumb",
+		DriveID:       "drive-id",
+		FileID:        "file-1",
+		Title:         "Clip With Failed Thumb",
+		PreviewStatus: "pending",
+		PublishedAt:   now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := cat.UpsertVideo(ctx, video); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := cat.UpdateVideoMeta(ctx, video.ID, catalog.VideoMetaPatch{ThumbnailStatus: "failed"}); err != nil {
+		t.Fatalf("mark thumbnail failed: %v", err)
+	}
+	missing, err := cat.CountVideosNeedingThumbnail(ctx, "drive-id")
+	if err != nil {
+		t.Fatalf("count missing thumbnails: %v", err)
+	}
+	if missing != 0 {
+		t.Fatalf("missing thumbnails = %d, want failed thumbnails excluded", missing)
+	}
+
+	app := &App{
+		cat:            cat,
+		workers:        make(map[string]*preview.Worker),
+		thumbWorkers:   make(map[string]*preview.ThumbWorker),
+		previewEnabled: true,
+	}
+	gen := &serverFakeTeaserGenerator{}
+	drv := &serverFakeDrive{}
+	worker := preview.NewWorker(gen, cat, drv, "")
+	thumbWorker := preview.NewThumbWorker(gen, cat, drv)
+	go worker.Run(ctx)
+	go thumbWorker.Run(ctx)
+
+	app.registerPreviewWorkers(ctx, "drive-id", worker, thumbWorker, func() {})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := cat.GetVideo(ctx, video.ID)
+		if err != nil {
+			t.Fatalf("get video: %v", err)
+		}
+		if got.PreviewStatus == "ready" {
+			events := gen.Events()
+			if len(events) != 1 || events[0] != "preview:"+video.ID {
+				t.Fatalf("events = %#v, want preview only", events)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	got, err := cat.GetVideo(ctx, video.ID)
+	if err != nil {
+		t.Fatalf("get video after timeout: %v", err)
+	}
+	t.Fatalf("preview status = %q, want ready; events=%#v", got.PreviewStatus, gen.Events())
+}
+
 func TestRegenFailedPreviewsQueuesOnlyFailedVideosForDrive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

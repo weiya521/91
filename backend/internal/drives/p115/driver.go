@@ -170,12 +170,20 @@ func (d *Driver) Stat(ctx context.Context, fileID string) (*drives.Entry, error)
 }
 
 func (d *Driver) StreamURL(ctx context.Context, fileID string) (*drives.StreamLink, error) {
+	return d.streamURLWithUA(ctx, fileID, d.ua)
+}
+
+func (d *Driver) StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*drives.StreamLink, error) {
+	return d.streamURLWithUA(ctx, fileID, header.Get("User-Agent"))
+}
+
+func (d *Driver) streamURLWithUA(ctx context.Context, fileID string, ua string) (*drives.StreamLink, error) {
 	// 需要先拿到 pickCode
 	f, err := d.client.GetFile(fileID)
 	if err != nil {
 		return nil, fmt.Errorf("115 get file: %w", err)
 	}
-	info, ua, err := d.downloadInfo(f.PickCode)
+	info, ua, err := d.downloadInfo(f.PickCode, ua)
 	if err != nil {
 		return nil, fmt.Errorf("115 download url: %w", err)
 	}
@@ -201,12 +209,16 @@ func (d *Driver) StreamURL(ctx context.Context, fileID string) (*drives.StreamLi
 	}, nil
 }
 
-func (d *Driver) downloadInfo(pickCode string) (*sdk.DownloadInfo, string, error) {
-	info, err := d.client.DownloadWithUA(pickCode, d.ua)
+func (d *Driver) downloadInfo(pickCode string, ua string) (*sdk.DownloadInfo, string, error) {
+	ua = strings.TrimSpace(ua)
+	if ua == "" {
+		ua = d.ua
+	}
+	info, err := d.client.DownloadWithUA(pickCode, ua)
 	if err != nil {
 		return nil, "", err
 	}
-	return info, d.ua, nil
+	return info, ua, nil
 }
 
 func (d *Driver) Upload(ctx context.Context, parentID, name string, r io.Reader, size int64) (string, error) {

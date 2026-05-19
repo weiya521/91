@@ -11,6 +11,10 @@ import (
 	"github.com/video-site/backend/internal/drives"
 )
 
+type streamURLWithHeader interface {
+	StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*drives.StreamLink, error)
+}
+
 // Registry 管理多个 Drive 实例
 type Registry struct {
 	mu     sync.RWMutex
@@ -53,7 +57,7 @@ func (r *Registry) Remove(id string) {
 // Proxy 根据 driveID + fileID 反向代理到真实网盘直链
 type Proxy struct {
 	Registry *Registry
-	// linkCache key: driveID + "/" + fileID，value: cachedLink
+	// linkCache key: driveID + "/" + fileID (+ User-Agent for UA-bound links)
 	cacheMu sync.Mutex
 	cache   map[string]cachedLink
 	http    *http.Client
@@ -74,8 +78,8 @@ func New(r *Registry) *Proxy {
 	}
 }
 
-func (p *Proxy) getLink(ctx context.Context, driveID, fileID string) (*drives.StreamLink, error) {
-	key := driveID + "/" + fileID
+func (p *Proxy) getLink(ctx context.Context, d drives.Drive, driveID, fileID string, header http.Header) (*drives.StreamLink, error) {
+	key := linkCacheKey(d, driveID, fileID, header)
 
 	p.cacheMu.Lock()
 	if c, ok := p.cache[key]; ok {
@@ -87,11 +91,15 @@ func (p *Proxy) getLink(ctx context.Context, driveID, fileID string) (*drives.St
 	}
 	p.cacheMu.Unlock()
 
-	d, ok := p.Registry.Get(driveID)
-	if !ok {
-		return nil, errDriveNotFound
+	var (
+		link *drives.StreamLink
+		err  error
+	)
+	if h, ok := d.(streamURLWithHeader); ok {
+		link, err = h.StreamURLWithHeader(ctx, fileID, header)
+	} else {
+		link, err = d.StreamURL(ctx, fileID)
 	}
-	link, err := d.StreamURL(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +109,41 @@ func (p *Proxy) getLink(ctx context.Context, driveID, fileID string) (*drives.St
 	return link, nil
 }
 
+func linkCacheKey(d drives.Drive, driveID, fileID string, header http.Header) string {
+	key := driveID + "/" + fileID
+	if _, ok := d.(streamURLWithHeader); ok {
+		key += "|ua=" + header.Get("User-Agent")
+	}
+	return key
+}
+
 func (p *Proxy) ServeStream(w http.ResponseWriter, r *http.Request, driveID, fileID string) {
-	link, err := p.getLink(r.Context(), driveID, fileID)
+	d, ok := p.Registry.Get(driveID)
+	if !ok {
+		http.Error(w, errDriveNotFound.Error(), errDriveNotFound.Code)
+		return
+	}
+
+	link, err := p.getLink(r.Context(), d, driveID, fileID, r.Header)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	if shouldRedirect(d) {
+		redirect(w, r, link)
+		return
+	}
 	p.serve(w, r, link)
+}
+
+func shouldRedirect(d drives.Drive) bool {
+	return d.Kind() == "p115"
+}
+
+func redirect(w http.ResponseWriter, r *http.Request, link *drives.StreamLink) {
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
+	http.Redirect(w, r, link.URL, http.StatusFound)
 }
 
 func (p *Proxy) serve(w http.ResponseWriter, r *http.Request, link *drives.StreamLink) {

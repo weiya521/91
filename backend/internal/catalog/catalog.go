@@ -325,7 +325,8 @@ func (c *Catalog) ListVideosByPreviewStatus(ctx context.Context, driveID, status
 	return out, nil
 }
 
-// ListVideosNeedingThumbnail returns videos that do not have any cover URL yet.
+// ListVideosNeedingThumbnail returns videos that still need a thumbnail attempt.
+// Failed thumbnails are reported separately and should not block teaser generation.
 func (c *Catalog) ListVideosNeedingThumbnail(ctx context.Context, driveID string, limit int) ([]*Video, error) {
 	if limit <= 0 {
 		limit = 10000
@@ -334,6 +335,7 @@ func (c *Catalog) ListVideosNeedingThumbnail(ctx context.Context, driveID string
 		`SELECT `+allVideoCols+` FROM videos
 		 WHERE drive_id = ?
 		   AND COALESCE(thumbnail_url, '') = ''
+		   AND COALESCE(thumbnail_status, 'pending') != 'failed'
 		   AND COALESCE(hidden, 0) = 0
 		   AND `+uniqueVideoWhereSQL+`
 		 ORDER BY created_at ASC
@@ -360,6 +362,7 @@ func (c *Catalog) CountVideosNeedingThumbnail(ctx context.Context, driveID strin
 		`SELECT COUNT(*) FROM videos
 		 WHERE drive_id = ?
 		   AND COALESCE(thumbnail_url, '') = ''
+		   AND COALESCE(thumbnail_status, 'pending') != 'failed'
 		   AND COALESCE(hidden, 0) = 0
 		   AND `+uniqueVideoWhereSQL,
 		driveID).Scan(&count)

@@ -36,6 +36,8 @@ type Generator struct {
 	cfg Config
 }
 
+const teaserSegmentTimeout = 90 * time.Second
+
 type ThumbnailGenerator interface {
 	Probe(ctx context.Context, link *drives.StreamLink) (float64, error)
 	GenerateThumbnail(ctx context.Context, link *drives.StreamLink, videoID string, duration float64) (string, error)
@@ -194,27 +196,88 @@ func pickSegmentStarts(duration float64, n int, eachSec float64) []float64 {
 	return starts
 }
 
-// pickThumbnailOffset 选封面抽帧的时间点（秒）。独立于 teaser。
-func pickThumbnailOffset() float64 {
-	return 5
+func teaserCandidateStarts(duration float64, primary []float64, eachSec float64) []float64 {
+	out := make([]float64, 0, len(primary)+8)
+	for _, s := range primary {
+		out = appendUniqueStart(out, s, eachSec)
+	}
+
+	if duration <= 0 {
+		for _, s := range []float64{0, 3, 30, 60} {
+			out = appendUniqueStart(out, s, eachSec)
+		}
+		return out
+	}
+
+	usable := duration - eachSec - 1
+	if usable < 0 {
+		usable = 0
+	}
+	for _, pct := range []float64{0.03, 0.08, 0.12, 0.25, 0.40, 0.55, 0.70, 0.90} {
+		s := duration * pct
+		if s > usable {
+			s = usable
+		}
+		out = appendUniqueStart(out, s, eachSec)
+	}
+	return out
+}
+
+func appendUniqueStart(starts []float64, start, eachSec float64) []float64 {
+	if start < 0 {
+		start = 0
+	}
+	minGap := math.Max(1, eachSec*1.5)
+	for _, existing := range starts {
+		if math.Abs(existing-start) < minGap {
+			return starts
+		}
+	}
+	return append(starts, start)
+}
+
+// thumbnailOffsets 选封面抽帧的时间点（秒）。独立于 teaser。
+func thumbnailOffsets() []float64 {
+	return []float64{5, 1, 0}
 }
 
 // --- 封面 ---
 
-// GenerateThumbnail 抽一张 jpg 封面。封面统一从第 5 秒抽帧，避免为封面单独探时长。
+// GenerateThumbnail 抽一张 jpg 封面。默认从第 5 秒抽帧，失败时回退到更早时间点。
 func (g *Generator) GenerateThumbnail(ctx context.Context, link *drives.StreamLink, videoID string, duration float64) (string, error) {
 	dir := filepath.Join(g.cfg.LocalDir, "thumbs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	dst := filepath.Join(dir, videoID+".jpg")
-	offset := pickThumbnailOffset()
 
+	var lastErr error
+	offsets := thumbnailOffsets()
+	for i, offset := range offsets {
+		if i > 0 {
+			_ = os.Remove(dst)
+		}
+		if err := g.generateThumbnailAtOffset(ctx, link, dst, offset); err != nil {
+			lastErr = err
+			if !thumbnailOffsetFallbackAllowed(err) {
+				return "", err
+			}
+			continue
+		}
+		return dst, nil
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", errors.New("thumbnail generation did not run")
+}
+
+func (g *Generator) generateThumbnailAtOffset(ctx context.Context, link *drives.StreamLink, dst string, offset float64) error {
 	ctx2, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	ffmpegLink, cleanup, err := prepareFFmpegLink(ctx2, link)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer cleanup()
 
@@ -236,13 +299,23 @@ func (g *Generator) GenerateThumbnail(ctx context.Context, link *drives.StreamLi
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(dst)
-		return "", ffmpegCommandError("ffmpeg thumb", err, out)
+		return ffmpegCommandError("ffmpeg thumb", err, out)
 	}
 	if info, statErr := os.Stat(dst); statErr != nil || info.Size() == 0 {
 		os.Remove(dst)
-		return "", fmt.Errorf("ffmpeg thumb produced empty file, stderr: %s", string(out))
+		return fmt.Errorf("ffmpeg thumb produced empty file, stderr: %s", string(out))
 	}
-	return dst, nil
+	return nil
+}
+
+func thumbnailOffsetFallbackAllowed(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "produced empty file") ||
+		strings.Contains(text, "signal: killed") ||
+		strings.Contains(text, "context deadline exceeded")
 }
 
 // --- 时长 ---
@@ -442,12 +515,34 @@ func (g *Generator) generateSequential(ctx context.Context, duration float64, li
 		}
 	}()
 
-	for i, start := range starts {
+	candidates := teaserCandidateStarts(duration, starts, eachSec)
+	targetSegments := len(starts)
+	var lastErr error
+	for i, start := range candidates {
+		if len(segmentPaths) >= targetSegments {
+			break
+		}
 		seg, err := g.generateSingleSegment(ctx2, i, start, eachSec, linkForInput)
 		if err != nil {
-			return "", err
+			if !teaserSegmentFallbackAllowed(err) {
+				return "", err
+			}
+			lastErr = err
+			continue
 		}
 		segmentPaths = append(segmentPaths, seg)
+	}
+	if len(segmentPaths) == 0 {
+		if lastErr != nil {
+			return "", lastErr
+		}
+		return "", errors.New("no usable teaser segment")
+	}
+	if len(segmentPaths) < targetSegments {
+		if lastErr != nil {
+			return "", fmt.Errorf("only generated %d/%d teaser segments: %w", len(segmentPaths), targetSegments, lastErr)
+		}
+		return "", fmt.Errorf("only generated %d/%d teaser segments", len(segmentPaths), targetSegments)
 	}
 
 	if len(segmentPaths) == 1 {
@@ -513,6 +608,9 @@ func (g *Generator) generateSequential(ctx context.Context, duration float64, li
 }
 
 func (g *Generator) generateSingleSegment(ctx context.Context, index int, start, eachSec float64, linkForInput func(int) (*drives.StreamLink, error)) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, teaserSegmentTimeout)
+	defer cancel()
+
 	link, err := linkForInput(index)
 	if err != nil {
 		return "", err
@@ -568,6 +666,31 @@ func (g *Generator) generateSingleSegment(ctx context.Context, index int, start,
 		return "", err
 	}
 	return segPath, nil
+}
+
+func teaserSegmentFallbackAllowed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := drives.RateLimitRetryAfter(err); ok {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	if strings.Contains(text, "server returned 403") ||
+		strings.Contains(text, "403 forbidden") ||
+		strings.Contains(text, "server returned 405") ||
+		strings.Contains(text, "405 method") ||
+		strings.Contains(text, "access denied") ||
+		strings.Contains(text, "request has been blocked") ||
+		strings.Contains(text, "访问被阻断") {
+		return false
+	}
+	return strings.Contains(text, "generated teaser has no video stream") ||
+		strings.Contains(text, "generated teaser has invalid duration") ||
+		strings.Contains(text, "generated teaser is empty") ||
+		strings.Contains(text, "produced empty file") ||
+		strings.Contains(text, "ffmpeg segment:") ||
+		strings.Contains(text, "ffprobe teaser:")
 }
 
 type localMediaProbe struct {
@@ -838,6 +961,7 @@ type Worker struct {
 	Catalog *catalog.Catalog
 	Drive   drives.Drive
 	ch      chan *catalog.Video
+	queue   videoQueue
 
 	RateLimitCooldown time.Duration
 	BeforeTask        func(context.Context) bool
@@ -858,10 +982,14 @@ func (w *Worker) Enqueue(v *catalog.Video) bool {
 	if v == nil {
 		return false
 	}
+	if !w.queue.reserve(v) {
+		return true
+	}
 	select {
 	case w.ch <- v:
 		return true
 	default:
+		w.queue.release(v)
 		return false
 	}
 }
@@ -870,10 +998,14 @@ func (w *Worker) EnqueueBlocking(ctx context.Context, v *catalog.Video) bool {
 	if v == nil {
 		return false
 	}
+	if !w.queue.reserve(v) {
+		return true
+	}
 	select {
 	case w.ch <- v:
 		return true
 	case <-ctx.Done():
+		w.queue.release(v)
 		return false
 	}
 }
@@ -883,6 +1015,7 @@ type ThumbWorker struct {
 	Catalog *catalog.Catalog
 	Drive   drives.Drive
 	ch      chan *catalog.Video
+	queue   videoQueue
 
 	RateLimitCooldown time.Duration
 	rateLimit         rateLimitState
@@ -913,6 +1046,54 @@ type taskActivity struct {
 	mu           sync.Mutex
 	currentID    string
 	currentTitle string
+}
+
+type videoQueue struct {
+	mu  sync.Mutex
+	ids map[string]struct{}
+}
+
+func (q *videoQueue) reserve(v *catalog.Video) bool {
+	if v == nil {
+		return false
+	}
+	if v.ID == "" {
+		return true
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.ids == nil {
+		q.ids = make(map[string]struct{})
+	}
+	if _, ok := q.ids[v.ID]; ok {
+		return false
+	}
+	q.ids[v.ID] = struct{}{}
+	return true
+}
+
+func (q *videoQueue) release(v *catalog.Video) {
+	if v == nil || v.ID == "" {
+		return
+	}
+	q.mu.Lock()
+	delete(q.ids, v.ID)
+	q.mu.Unlock()
+}
+
+func (q *videoQueue) lengthExcluding(currentID string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := len(q.ids)
+	if currentID != "" {
+		if _, ok := q.ids[currentID]; ok {
+			n--
+		}
+	}
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 func (a *taskActivity) start(v *catalog.Video) {
@@ -991,10 +1172,14 @@ func (w *ThumbWorker) Enqueue(v *catalog.Video) bool {
 	if v == nil {
 		return false
 	}
+	if !w.queue.reserve(v) {
+		return true
+	}
 	select {
 	case w.ch <- v:
 		return true
 	default:
+		w.queue.release(v)
 		return false
 	}
 }
@@ -1003,10 +1188,14 @@ func (w *ThumbWorker) EnqueueBlocking(ctx context.Context, v *catalog.Video) boo
 	if v == nil {
 		return false
 	}
+	if !w.queue.reserve(v) {
+		return true
+	}
 	select {
 	case w.ch <- v:
 		return true
 	case <-ctx.Done():
+		w.queue.release(v)
 		return false
 	}
 }
@@ -1015,14 +1204,16 @@ func (w *Worker) Status() TaskStatus {
 	if w == nil {
 		return TaskStatus{State: "idle"}
 	}
-	return taskStatus(&w.activity, &w.rateLimit, len(w.ch))
+	currentID, _ := w.activity.current()
+	return taskStatus(&w.activity, &w.rateLimit, w.queue.lengthExcluding(currentID))
 }
 
 func (w *ThumbWorker) Status() TaskStatus {
 	if w == nil {
 		return TaskStatus{State: "idle"}
 	}
-	return taskStatus(&w.activity, &w.rateLimit, len(w.ch))
+	currentID, _ := w.activity.current()
+	return taskStatus(&w.activity, &w.rateLimit, w.queue.lengthExcluding(currentID))
 }
 
 func taskStatus(activity *taskActivity, rateLimit *rateLimitState, queueLength int) TaskStatus {
@@ -1085,6 +1276,7 @@ func (w *ThumbWorker) Run(ctx context.Context) {
 }
 
 func (w *Worker) processQueued(ctx context.Context, v *catalog.Video) {
+	defer w.queue.release(v)
 	if w.BeforeTask != nil && !w.BeforeTask(ctx) {
 		return
 	}
@@ -1098,6 +1290,7 @@ func (w *Worker) processQueued(ctx context.Context, v *catalog.Video) {
 }
 
 func (w *ThumbWorker) processQueued(ctx context.Context, v *catalog.Video) {
+	defer w.queue.release(v)
 	w.activity.start(v)
 	defer w.activity.done()
 	if !waitForRateLimitCooldown(ctx, &w.rateLimit, "thumb", w.Drive) {

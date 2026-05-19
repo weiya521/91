@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+export HOME="${HOME:-/root}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+export GOCACHE="${GOCACHE:-/tmp/video-site-91/go-build}"
+
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 FRONTEND_PORT="${FRONTEND_PORT:-9191}"
 FRONTEND_MODE="${FRONTEND_MODE:-preview}"
@@ -101,7 +105,7 @@ start_backend() {
   fi
 
   need_cmd go
-  mkdir -p "$LOG_DIR"
+  mkdir -p "$LOG_DIR" "$GOCACHE"
   echo "starting backend on 127.0.0.1:$BACKEND_PORT"
   (
     cd "$ROOT_DIR/backend"

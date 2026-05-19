@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,78 @@ func TestPreviewURLFallsBackWithoutUpdatedAt(t *testing.T) {
 
 	if got != "/p/preview/video-1" {
 		t.Fatalf("preview URL = %q, want unversioned URL", got)
+	}
+}
+
+func TestHomeWindowPageChangesEveryTwoHours(t *testing.T) {
+	total := homePageSize * 3
+	if got := homeWindowPage(time.Unix(0, 0), total, homePageSize); got != 1 {
+		t.Fatalf("window page at epoch = %d, want 1", got)
+	}
+	if got := homeWindowPage(time.Unix(int64(homeWindowDuration/time.Second)-1, 0), total, homePageSize); got != 1 {
+		t.Fatalf("window page before boundary = %d, want 1", got)
+	}
+	if got := homeWindowPage(time.Unix(int64(homeWindowDuration/time.Second), 0), total, homePageSize); got != 2 {
+		t.Fatalf("window page at first boundary = %d, want 2", got)
+	}
+	if got := homeWindowPage(time.Unix(int64(3*homeWindowDuration/time.Second), 0), total, homePageSize); got != 1 {
+		t.Fatalf("window page after cycle = %d, want 1", got)
+	}
+}
+
+func TestHandleHomeRotatesHotVideosByTwoHourWindow(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	base := time.Unix(1_700_000_000, 0)
+	for i := 0; i < homePageSize+1; i++ {
+		id := "video-" + strconv.Itoa(i)
+		if err := cat.UpsertVideo(ctx, &catalog.Video{
+			ID:          id,
+			DriveID:     "drive",
+			FileID:      "file-" + strconv.Itoa(i),
+			Title:       "Video " + strconv.Itoa(i),
+			Likes:       homePageSize + 1 - i,
+			PublishedAt: base.Add(time.Duration(i) * time.Second),
+			CreatedAt:   base,
+			UpdatedAt:   base,
+		}); err != nil {
+			t.Fatalf("seed video %s: %v", id, err)
+		}
+	}
+
+	firstWindow := requestHomeIDs(t, &Server{
+		Catalog: cat,
+		Now:     func() time.Time { return time.Unix(0, 0) },
+	})
+	sameWindow := requestHomeIDs(t, &Server{
+		Catalog: cat,
+		Now:     func() time.Time { return time.Unix(int64(homeWindowDuration/time.Second)-1, 0) },
+	})
+	nextWindow := requestHomeIDs(t, &Server{
+		Catalog: cat,
+		Now:     func() time.Time { return time.Unix(int64(homeWindowDuration/time.Second), 0) },
+	})
+
+	if strings.Join(firstWindow, ",") != strings.Join(sameWindow, ",") {
+		t.Fatalf("same two-hour window changed videos: first=%v same=%v", firstWindow, sameWindow)
+	}
+	if strings.Join(firstWindow, ",") == strings.Join(nextWindow, ",") {
+		t.Fatalf("next two-hour window did not change videos: %v", nextWindow)
+	}
+	if len(firstWindow) != homePageSize {
+		t.Fatalf("first window item count = %d, want %d", len(firstWindow), homePageSize)
+	}
+	if len(nextWindow) != 1 {
+		t.Fatalf("next window item count = %d, want final page with 1 item", len(nextWindow))
 	}
 }
 
@@ -650,6 +723,25 @@ func requestWithRouteParam(method, target, key, value string, body *strings.Read
 	rctx.URLParams.Add(key, value)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	return req
+}
+
+func requestHomeIDs(t *testing.T, server *Server) []string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/home", nil)
+	rr := httptest.NewRecorder()
+	server.handleHome(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("home status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var videos []VideoDTO
+	if err := json.NewDecoder(rr.Body).Decode(&videos); err != nil {
+		t.Fatalf("decode home response: %v", err)
+	}
+	ids := make([]string, 0, len(videos))
+	for _, v := range videos {
+		ids = append(ids, v.ID)
+	}
+	return ids
 }
 
 func multipartUploadRequest(t *testing.T, fields map[string]string, fileName, fileContent string) *http.Request {

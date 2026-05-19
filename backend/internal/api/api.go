@@ -52,11 +52,17 @@ type Server struct {
 	LocalDir        string
 	UploadDir       string
 	FFmpegPath      string
+	Now             func() time.Time
 	OnVideoUploaded func(*catalog.Video)
 
 	transcodeMu   sync.Mutex
 	transcodeJobs map[string]bool
 }
+
+const (
+	homePageSize       = 10
+	homeWindowDuration = 2 * time.Hour
+)
 
 // VideoDTO 是返回给前端的视频对象，字段名跟前端 VideoItem 对齐
 type VideoDTO struct {
@@ -134,14 +140,43 @@ func (s *Server) RegisterRoutes(r chi.Router, a *auth.Authenticator) {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	items, _, err := s.Catalog.ListVideos(r.Context(), catalog.ListParams{
-		Sort: "hot", Page: 1, PageSize: 24,
+	items, total, err := s.Catalog.ListVideos(r.Context(), catalog.ListParams{
+		Sort: "hot", Page: 1, PageSize: homePageSize,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	page := homeWindowPage(s.now(), total, homePageSize)
+	if page > 1 {
+		items, _, err = s.Catalog.ListVideos(r.Context(), catalog.ListParams{
+			Sort: "hot", Page: page, PageSize: homePageSize,
+		})
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, mapVideos(items))
+}
+
+func (s *Server) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+func homeWindowPage(now time.Time, total, pageSize int) int {
+	if pageSize <= 0 || total <= pageSize {
+		return 1
+	}
+	pageCount := (total + pageSize - 1) / pageSize
+	if pageCount <= 1 {
+		return 1
+	}
+	window := now.Unix() / int64(homeWindowDuration/time.Second)
+	return int(window%int64(pageCount)) + 1
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {

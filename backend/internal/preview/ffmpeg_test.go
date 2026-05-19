@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
@@ -91,6 +92,69 @@ func TestTinyVideoPreviewPlanUsesWholeVideoAsSingleSegment(t *testing.T) {
 	}
 	if plan.starts[0] != 0 {
 		t.Fatalf("start[0] = %.2f, want 0", plan.starts[0])
+	}
+}
+
+func TestTeaserCandidateStartsKeepPrimaryAndAddFallbacks(t *testing.T) {
+	primary := []float64{10.2, 64.65, 119.1, 173.55}
+	got := teaserCandidateStarts(204, primary, 3)
+	if len(got) <= len(primary) {
+		t.Fatalf("candidate starts = %#v, want fallback starts after primary", got)
+	}
+	for i, want := range primary {
+		if math.Abs(got[i]-want) > 0.001 {
+			t.Fatalf("candidate[%d] = %.2f, want primary %.2f first", i, got[i], want)
+		}
+	}
+}
+
+func TestTeaserSegmentFallbackAllowedForBadSegmentOutput(t *testing.T) {
+	for _, err := range []error{
+		errors.New("generated teaser has no video stream"),
+		errors.New("ffmpeg segment: signal: killed, stderr: "),
+		errors.New("ffmpeg segment produced empty file, stderr: "),
+	} {
+		if !teaserSegmentFallbackAllowed(err) {
+			t.Fatalf("teaserSegmentFallbackAllowed(%v) = false, want true", err)
+		}
+	}
+	if teaserSegmentFallbackAllowed(errors.New("server returned 403 forbidden")) {
+		t.Fatal("403 errors should not trigger teaser segment fallback")
+	}
+}
+
+func TestTeaserSegmentFallbackRequiresPlannedSegmentCount(t *testing.T) {
+	err := errors.New("only generated 2/4 teaser segments: generated teaser has no video stream")
+	if !strings.Contains(err.Error(), "2/4") {
+		t.Fatalf("error = %v, want generated/planned segment count", err)
+	}
+}
+
+func TestThumbnailOffsetsUseFiveSecondsWithEarlyFallbacks(t *testing.T) {
+	got := thumbnailOffsets()
+	want := []float64{5, 1, 0}
+	if len(got) != len(want) {
+		t.Fatalf("offsets = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("offset[%d] = %.2f, want %.2f", i, got[i], want[i])
+		}
+	}
+}
+
+func TestThumbnailOffsetFallbackAllowedForEmptyOutputAndTimeouts(t *testing.T) {
+	for _, err := range []error{
+		errors.New("ffmpeg thumb produced empty file, stderr: "),
+		errors.New("ffmpeg thumb: signal: killed, stderr: "),
+		context.DeadlineExceeded,
+	} {
+		if !thumbnailOffsetFallbackAllowed(err) {
+			t.Fatalf("thumbnailOffsetFallbackAllowed(%v) = false, want true", err)
+		}
+	}
+	if thumbnailOffsetFallbackAllowed(errors.New("server returned 403 forbidden")) {
+		t.Fatal("403 errors should not trigger thumbnail offset fallback")
 	}
 }
 
