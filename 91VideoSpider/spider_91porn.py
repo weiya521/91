@@ -9,7 +9,7 @@
   - 视频直链 (MP4)
 
 依赖安装:
-    pip install requests beautifulsoup4 lxml
+    pip install requests beautifulsoup4 lxml PySocks
 
 使用方法:
     # 全量爬取（默认行为，从 page=1 一直爬到末尾，写到 OUTPUT_FILE）
@@ -729,7 +729,7 @@ def print_help():
   - 视频直链 (MP4)
 
 依赖安装:
-    pip install requests beautifulsoup4 lxml
+    pip install requests beautifulsoup4 lxml PySocks
 
 使用方法:
     python spider_91porn.py

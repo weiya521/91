@@ -130,7 +130,7 @@ install_deps() {
     export DEBIAN_FRONTEND=noninteractive
     log "installing runtime dependencies"
     apt-get update
-    apt-get install -y ca-certificates curl tar ffmpeg openssl iproute2 python3 python3-requests python3-bs4 python3-lxml
+    apt-get install -y ca-certificates curl tar ffmpeg openssl iproute2 python3 python3-requests python3-bs4 python3-lxml python3-socks
     return
   fi
 
@@ -689,13 +689,14 @@ update_app() {
     exec_latest_manager_update
   fi
 
+  install_deps
+
   if should_skip_update; then
     log "already up to date; skipped app update"
     return 0
   fi
 
   check_disk_space
-  install_deps
 
   local backup
   backup="$(mktemp -d)"
