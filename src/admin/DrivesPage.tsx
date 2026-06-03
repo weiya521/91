@@ -608,7 +608,10 @@ export function DrivesPage() {
       {storage && <StorageSummary storage={storage} />}
 
       {loading ? (
-        <div className="admin-empty">加载中...</div>
+        <div className="admin-loading-state">
+          <RefreshCw size={20} className="admin-spin" />
+          <span>加载中...</span>
+        </div>
       ) : loadError ? (
         <div className="admin-error-state">
           <strong>网盘数据加载失败</strong>
@@ -681,6 +684,7 @@ export function DrivesPage() {
           uploadTargets={uploadTargets}
           nameError={nameError}
           onNameBlur={() => setNameTouched(true)}
+          onBack={() => setNameTouched(false)}
         />
       </Modal>
       <DeleteDriveModal

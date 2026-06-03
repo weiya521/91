@@ -8,11 +8,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   if (status === "loading") {
-    return (
-      <div className="admin-loading-screen">
-        加载中...
-      </div>
-    );
+    return null;
   }
 
   if (status === "guest") {

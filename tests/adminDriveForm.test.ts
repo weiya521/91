@@ -20,6 +20,24 @@ const combinedSource = drivesPageSource + "\n" + driveFormSource + "\n" + consta
   "utf8"
 );
 
+function driveTypeOptions() {
+  const match = /const DRIVE_OPTIONS:\s*DriveOption\[]\s*=\s*\[([\s\S]*?)\];/.exec(
+    driveFormSource
+  );
+  assert.ok(match, "drive option card list should be present");
+  return Array.from(
+    match[1].matchAll(/\{\s*kind:\s*"([^"]+)",\s*label:\s*"([^"]+)"/g),
+    (option) => ({ value: option[1], label: option[2] })
+  );
+}
+
+function assertDriveTypeOption(value: string, label: string) {
+  assert.ok(
+    driveTypeOptions().some((option) => option.value === value && option.label === label),
+    `${value} drive type option should be present`
+  );
+}
+
 test("spider91 drive form does not expose advanced crawler credentials", () => {
   assert.match(combinedSource, /key: "proxy"/);
   assert.match(combinedSource, /label: "代理地址（可选）"/);
@@ -70,7 +88,7 @@ test("onedrive drive form only exposes required default-app fields", () => {
 });
 
 test("googledrive drive form only exposes refresh token", () => {
-  assert.match(combinedSource, /<option value="googledrive">Google Drive<\/option>/);
+  assertDriveTypeOption("googledrive", "Google Drive");
 
   const match =
     /case "googledrive":\s*return \[([\s\S]*?)\];\s*case "localstorage":/.exec(
@@ -104,7 +122,7 @@ test("pikpak drive form only exposes account login fields", () => {
 });
 
 test("localstorage drive form asks for a server directory path", () => {
-  assert.match(combinedSource, /<option value="localstorage">本地存储<\/option>/);
+  assertDriveTypeOption("localstorage", "本地存储");
 
   const match =
     /case "localstorage":\s*return \[([\s\S]*?)\];\s*case "spider91":/.exec(
@@ -120,20 +138,14 @@ test("localstorage drive form asks for a server directory path", () => {
 });
 
 test("drive type selector keeps primary source order", () => {
-  const options = Array.from(
-    combinedSource.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g),
-    (match) => ({ value: match[1], label: match[2] })
-  );
-  const driveOptions = options.slice(0, 9);
-
-  assert.deepEqual(driveOptions, [
+  assert.deepEqual(driveTypeOptions(), [
     { value: "p115", label: "115 网盘" },
     { value: "p123", label: "123 云盘" },
     { value: "pikpak", label: "PikPak" },
     { value: "onedrive", label: "OneDrive" },
     { value: "googledrive", label: "Google Drive" },
     { value: "localstorage", label: "本地存储" },
-    { value: "spider91", label: "91 Spider" },
+    { value: "spider91", label: "91 爬虫" },
     { value: "quark", label: "夸克网盘" },
     { value: "wopan", label: "联通沃盘" },
   ]);

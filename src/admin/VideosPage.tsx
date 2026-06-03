@@ -53,6 +53,7 @@ export function VideosPage() {
   }, [driveId, page, searchKeyword]);
 
   useEffect(() => {
+    if (keyword === searchKeyword) return;
     const timer = window.setTimeout(() => {
       setSearchKeyword(keyword);
       setPage(1);
@@ -208,44 +209,10 @@ export function VideosPage() {
       )}
 
       {loading ? (
-        <table className="admin-table is-selectable">
-          <thead>
-            <tr>
-              <th className="is-checkbox" style={{ width: '40px' }}><Square size={16} color="var(--border-default)" /></th>
-              <th>标题</th>
-              <th>作者</th>
-              <th>标签</th>
-              <th>时长</th>
-              <th>Teaser</th>
-              <th>来源</th>
-              <th className="is-actions">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...Array(10)].map((_, i) => (
-              <tr key={i}>
-                <td className="is-checkbox"><Square size={16} color="var(--border-subtle)" /></td>
-                <td>
-                  <div className="admin-skeleton-pulse" style={{ width: '60%', height: '14px', marginBottom: '6px', borderRadius: '4px' }}></div>
-                  <div className="admin-skeleton-pulse" style={{ width: '40%', height: '12px', borderRadius: '4px' }}></div>
-                </td>
-                <td><div className="admin-skeleton-pulse" style={{ width: '80%', height: '14px', borderRadius: '4px' }}></div></td>
-                <td>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <div className="admin-skeleton-pulse" style={{ width: '40px', height: '22px', borderRadius: '12px' }}></div>
-                    <div className="admin-skeleton-pulse" style={{ width: '30px', height: '22px', borderRadius: '12px' }}></div>
-                  </div>
-                </td>
-                <td><div className="admin-skeleton-pulse" style={{ width: '40px', height: '14px', borderRadius: '4px' }}></div></td>
-                <td><div className="admin-skeleton-pulse" style={{ width: '50px', height: '22px', borderRadius: '4px' }}></div></td>
-                <td><div className="admin-skeleton-pulse" style={{ width: '60px', height: '14px', borderRadius: '4px' }}></div></td>
-                <td className="is-actions">
-                  <div className="admin-skeleton-pulse" style={{ width: '60px', height: '28px', borderRadius: '4px', display: 'inline-block' }}></div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="admin-loading-state">
+          <RefreshCw size={20} className="admin-spin" />
+          <span>加载中...</span>
+        </div>
       ) : loadError ? (
         <div className="admin-error-state">
           <strong>视频加载失败</strong>

@@ -1143,6 +1143,9 @@
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .admin-table.admin-drives-table tr:hover td {
@@ -1158,6 +1161,7 @@
     border-bottom: 0;
     white-space: normal;
     overflow-wrap: anywhere;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .admin-table.admin-drives-table td::before {
@@ -1398,6 +1402,14 @@
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
     transition: border-color var(--transition-fast), transform var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .admin-table:not(.admin-drives-table) tr.is-selected {
+    background: var(--accent-soft);
+    border-color: var(--border-accent);
   }
 
   @media (hover: hover) and (pointer: fine) {
@@ -1419,6 +1431,7 @@
     border-bottom: 0;
     white-space: normal;
     overflow-wrap: anywhere;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .admin-table:not(.admin-drives-table) td::before {
@@ -1538,6 +1551,17 @@
   background: var(--bg-page);
 }
 
+.admin-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  color: var(--text-muted);
+  font-size: var(--font-md);
+}
+
 .admin-videos-filter {
   flex-wrap: wrap;
 }
@@ -1647,6 +1671,150 @@
   .admin-table-pagination {
     justify-content: center;
   }
+}
+
+/* =========================================================
+ * Drive Type Picker (新建网盘 - 类型选择卡片)
+ * ========================================================= */
+.admin-drive-type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.admin-drive-type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-4) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-default);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--transition-fast),
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.admin-drive-type-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+  box-shadow: 0 4px 16px var(--accent-glow);
+  transform: translateY(-2px);
+}
+
+.admin-drive-type-card:active {
+  transform: translateY(0);
+}
+
+.admin-drive-type-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.admin-drive-type-card__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.admin-drive-type-card__label {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+@media (max-width: 520px) {
+  .admin-drive-type-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.admin-drive-step-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.admin-drive-step-back:hover {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="pink"] .admin-drive-step-back:hover {
+  background: rgba(120, 50, 80, 0.06);
+}
+
+.admin-drive-step-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.admin-drive-step-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-accent);
+}
+
+.admin-drive-step-badge__abbr {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+}
+
+.admin-drive-step-badge__label {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.admin-form__section {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.admin-form__section + .admin-form__section {
+  margin-top: var(--space-2);
+}
+
+.admin-form__section-label {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+  margin: 0;
 }
 
 /* =========================================================
@@ -2071,6 +2239,9 @@
   cursor: pointer;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   position: relative;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .admin-drive-card:hover,
@@ -2497,6 +2668,9 @@
   gap: var(--space-3);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   box-shadow: var(--shadow-sm);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .admin-tag-card:hover {

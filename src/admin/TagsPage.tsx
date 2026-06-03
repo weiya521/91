@@ -360,7 +360,10 @@ export function TagsPage() {
           )}
 
           {loading ? (
-            <div className="admin-empty">加载中...</div>
+            <div className="admin-loading-state">
+              <RefreshCw size={20} className="admin-spin" />
+              <span>加载中...</span>
+            </div>
           ) : loadError ? (
             <div className="admin-error-state">
               <strong>标签加载失败</strong>
